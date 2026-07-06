@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "tiers": {
+    "anthropic": "frontier",
+    "github-copilot": "frontier",
+    "omlx": "local"
+  }
+}

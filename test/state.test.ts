@@ -9,7 +9,7 @@ import type { TurnRecord } from "../types.ts";
 
 const rec = (over: Partial<TurnRecord> = {}): TurnRecord => ({
   ts: "2026-07-04T00:00:00.000Z", turn: 1, model: "m", provider: "p",
-  input: 10, cacheRead: 20, cacheWrite: 0, output: 5, totalTokens: 35, costTotal: 0.01, ...over,
+  input: 10, cacheRead: 20, cacheWrite: 0, output: 5, totalTokens: 35, costTotal: 0.01, policy: "untagged", ...over,
 });
 
 test("safeSessionKey strips directory parts and rejects traversal", () => {

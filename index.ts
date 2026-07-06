@@ -30,8 +30,11 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { aggregateByModel, buildRecord, formatTable, formatTerse } from "./record.ts";
-import { appendTurn, readSession, safeSessionKey } from "./state.ts";
+import {
+  aggregateByModel, aggregateByProvider, aggregateByTier,
+  buildRecord, formatProviderSection, formatTable, formatTerse, formatTierSection, UNTAGGED,
+} from "./record.ts";
+import { appendTurn, loadTierMap, readSession, safeSessionKey } from "./state.ts";
 import type { AssistantMessageLike } from "./types.ts";
 
 interface MessageEndEvent {
@@ -44,6 +47,11 @@ interface ModelContext {
 
 const ENV_SESSION = "TOKEN_METER_SESSION";
 const ENV_ENABLED = "TOKEN_METER_ENABLED";
+// #521: operator A/B label. Read from env (inherited by subagent children like
+// the two vars above), normalized to "untagged", and captured at spawn time —
+// a mid-session `export` in the invoking shell is never seen (same env-snapshot
+// semantics ADR-0073 documents for TOKEN_METER_ENABLED).
+const ENV_POLICY_TAG = "TOKEN_METER_POLICY_TAG";
 
 /** Read the USER-layer settings toggle only (project layer is untrusted here). */
 async function readSettingsEnabled(): Promise<boolean> {
@@ -72,6 +80,10 @@ export default function tokenMeter(pi: ExtensionAPI): void {
   let enabled = process.env[ENV_ENABLED] === "1";
   let sessionKey = "unknown-session";
   let turn = 0;
+  // #521: normalized once here; write-back keeps the whole descendant tree on
+  // the same literal (a child of an untagged root sees "untagged", not "").
+  let policyTag = process.env[ENV_POLICY_TAG]?.trim() || UNTAGGED;
+  process.env[ENV_POLICY_TAG] = policyTag;
 
   // Export env so subagent child processes inherit enablement + the root key.
   // Only the ROOT stamps the session id (guarded) — descendants keep the root's.
@@ -99,9 +111,10 @@ export default function tokenMeter(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("token-meter", {
-    description: "Token counter: /token-meter [on|off|status]",
+    description: "Token counter: /token-meter [on|off|status|policy <tag>]",
     handler: async (args, ctx) => {
-      const sub = (args ?? "").trim().toLowerCase();
+      const raw = (args ?? "").trim();
+      const sub = raw.toLowerCase();
       if (sub === "on") {
         enabled = true;
         propagate();
@@ -110,6 +123,11 @@ export default function tokenMeter(pi: ExtensionAPI): void {
         enabled = false;
         process.env[ENV_ENABLED] = "0";
         if (ctx.hasUI) ctx.ui.setStatus("token-meter", "");
+      } else if (sub === "policy" || sub.startsWith("policy ")) {
+        // #521: retag from here forward. Subagents spawned earlier keep the
+        // old tag (env is copied at spawn — the ADR-0073 caveat applies).
+        policyTag = raw.slice("policy".length).trim() || UNTAGGED;
+        process.env[ENV_POLICY_TAG] = policyTag;
       }
       let summary = "no usage recorded yet";
       try {
@@ -117,7 +135,10 @@ export default function tokenMeter(pi: ExtensionAPI): void {
       } catch {
         /* status still reported below */
       }
-      ctx.ui.notify(`token-meter: ${enabled ? "ON" : "OFF"} — ${summary}`, "info");
+      ctx.ui.notify(
+        `token-meter: ${enabled ? "ON" : "OFF"} (policy: ${policyTag}) — ${summary}`,
+        "info",
+      );
     },
   });
 
@@ -132,6 +153,7 @@ export default function tokenMeter(pi: ExtensionAPI): void {
         ts: new Date().toISOString(),
         turn,
         providerFallback: (ctx as unknown as ModelContext).model?.provider ?? "unknown",
+        policyTag,
       });
       if (record) await appendTurn(sessionKey, record);
     } catch {
@@ -146,7 +168,8 @@ export default function tokenMeter(pi: ExtensionAPI): void {
     description:
       "Report token usage for the current pi session, broken down by model. " +
       "Reads token-meter's local per-session log; requires token-meter to be enabled. " +
-      "Returns a terse one-line total by default, or a per-model table with verbose:true.",
+      "Returns a terse one-line total by default, or per-model, per-provider, and " +
+      "per-tier (frontier vs local) tables with verbose:true.",
     promptSnippet: "Report this session's token usage with token_usage (per-model totals).",
     promptGuidelines: [
       "token_usage reports THIS session's token counts by model from a local log; it makes no network call.",
@@ -158,9 +181,9 @@ export default function tokenMeter(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params) {
-      let totals;
+      let records;
       try {
-        totals = aggregateByModel(await readSession(sessionKey));
+        records = await readSession(sessionKey);
       } catch (err) {
         return {
           content: [{ type: "text" as const, text: `token_usage: could not read the session log — ${(err as Error).message}` }],
@@ -168,10 +191,22 @@ export default function tokenMeter(pi: ExtensionAPI): void {
           isError: true,
         };
       }
-      const text = params.verbose ? formatTable(totals) : formatTerse(totals);
+      const totals = aggregateByModel(records);
+      let text: string;
+      if (params.verbose) {
+        // Tier map load is fail-quiet: missing/corrupt tiers.json → all "unmapped".
+        const tiers = aggregateByTier(records, await loadTierMap());
+        text = [
+          formatTable(totals),
+          formatProviderSection(aggregateByProvider(records)),
+          formatTierSection(tiers),
+        ].join("\n\n");
+      } else {
+        text = formatTerse(totals);
+      }
       return {
         content: [{ type: "text" as const, text }],
-        details: { enabled, session: sessionKey, models: totals.length },
+        details: { enabled, session: sessionKey, policy: policyTag, models: totals.length },
       };
     },
   });

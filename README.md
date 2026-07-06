@@ -22,7 +22,8 @@ is pi's own session id, so it lines up with the session transcript):
 
 ```jsonc
 { "ts":"2026-07-04T14:32:01Z","turn":5,"model":"claude-sonnet-5","provider":"anthropic",
-  "input":812,"cacheRead":4200,"cacheWrite":0,"output":340,"totalTokens":5352,"costTotal":0.0193 }
+  "input":812,"cacheRead":4200,"cacheWrite":0,"output":340,"totalTokens":5352,"costTotal":0.0193,
+  "policy":"mixed-local" }
 ```
 
 `input` is **fresh** (uncached) input; `cacheRead`/`cacheWrite` are prompt-cache
@@ -41,8 +42,8 @@ strings, never message content.
 
 ## Retrieving usage
 
-**In-session** — the `token_usage` tool (terse by default, `verbose:true` for the
-per-model table):
+**In-session** — the `token_usage` tool (terse by default; `verbose:true` adds
+the per-model, per-provider, and per-tier tables):
 
 ```text
 Session tokens: 61,660 (claude-sonnet-5) + 5,800 (claude-haiku-4) = 67,460 total · $0.33
@@ -54,6 +55,10 @@ Session tokens: 61,660 (claude-sonnet-5) + 5,800 (claude-haiku-4) = 67,460 total
 scripts/token-meter.sh                 # current session (most recent by mtime)
 scripts/token-meter.sh --session <id>  # one named session
 scripts/token-meter.sh --all-time      # aggregate across every session
+scripts/token-meter.sh --by-provider   # group by provider instead of model
+scripts/token-meter.sh --by-tier       # group by tier (frontier/local/unmapped)
+scripts/token-meter.sh --by-policy     # group by routing-policy tag (#521)
+scripts/token-meter.sh --compare-policies  # policy x tier + policy x model report
 scripts/token-meter.sh --list          # list sessions (id, started, turns)
 ```
 
@@ -65,6 +70,52 @@ INFO  claude-haiku-4: turns=3 input=1200 cacheRead=4000 output=600 total=5800 co
 TOTAL — 12 turns, 67460 tokens, $0.33
 ```
 
+## Provider and tier rollups
+
+`tiers.json` (committed next to the extension) classifies each provider into a
+tier — `frontier` (e.g. `anthropic`, `github-copilot`) or `local` (e.g. `omlx`).
+`--by-provider` / `--by-tier` on the CLI, and the verbose `token_usage` output,
+aggregate on those axes so an all-frontier session can be compared against a
+mixed frontier+local one. Providers absent from the map report as **`unmapped`**
+— never silently folded into a real tier. Override the map location with
+`TOKEN_METER_TIERS_FILE`; a missing or corrupt map degrades to all-unmapped
+without breaking metering.
+
+Two measurement caveats, by design:
+
+- **Local cost renders `n/a`, never $0.** Local providers typically report no
+  `usage.cost.total`, so a frontier-vs-local comparison is **token-count-based**;
+  dollar totals only cover turns whose provider reported cost.
+- **Copilot cache fields are unreliable upstream** (`cacheRead`/`cacheWrite`
+  reported as 0 — SDK issue #1073, see cache-meter). Cross-provider cache-ratio
+  comparisons are not meaningful; raw input/output/total counts are unaffected.
+
+## Routing-policy tagging and A/B comparison (#521, ADR-0077)
+
+Every record carries a `policy` field: the operator's A/B label from
+`TOKEN_METER_POLICY_TAG`, normalized to the sentinel `"untagged"` when unset.
+(Disambiguation: this is a **measurement label** — nothing routes on it; it is
+unrelated to auto-router's candidate-selection policy or ADR-0076's tier
+policy.) Because subagent children inherit the parent's environment, a whole
+orchestration tree records one consistent label:
+
+```sh
+TOKEN_METER_POLICY_TAG=mixed-local  pi --token-meter -p "…"   # arm A
+TOKEN_METER_POLICY_TAG=all-frontier pi --token-meter -p "…"   # arm B
+scripts/token-meter.sh --all-time --compare-policies           # the A/B report
+```
+
+- The tag is an env **snapshot** captured at process spawn: a mid-session
+  `export` in your shell is never seen, and `/token-meter policy <tag>` retags
+  only this process going forward (already-spawned children keep the old tag —
+  the same ADR-0073 env-capture caveat as `/token-meter off`).
+- Records with no `policy` field (logs written before #521) aggregate under
+  `untagged` — never dropped. The sentinel is defined once (`UNTAGGED` in
+  `record.ts`) and the CLI's jq default is kept in lockstep by a unit test.
+- CLI views: `--by-policy`, `--by-policy-tier`, `--by-policy-model`, and
+  `--compare-policies` (both cross-tabs in one report). They compose with
+  `--session`/`--all-time` like every other grouping flag.
+
 ## Enabling / disabling
 
 **Inert by default** — zero overhead and nothing recorded unless you opt in.
@@ -73,7 +124,8 @@ TOTAL — 12 turns, 67460 tokens, $0.33
   `~/.pi/agent/settings.json`. Only the user-layer setting is honored — a project's
   `.pi/settings.json` cannot flip metering.
 - **Per session:** launch with `--token-meter`, or toggle mid-session with
-  `/token-meter on|off` (`/token-meter status` reports the running total).
+  `/token-meter on|off` (`/token-meter status` reports the running total;
+  `/token-meter policy <tag>` retags this process — see the policy section).
 
 When on, the status bar shows `📊 token-meter: on`.
 
@@ -82,9 +134,10 @@ When on, the status bar shows `📊 token-meter: on`.
 | File | Role |
 |---|---|
 | `index.ts` | handlers (`session_start`, `message_end`), the `/token-meter` command + `--token-meter` flag, the `token_usage` tool, and the subagent env propagation |
-| `record.ts` | pure record building + per-model aggregation + output formatting |
-| `state.ts` | per-session append-only log + corruption-tolerant reader + session-id sanitization |
-| `types.ts` | usage/record/totals shapes |
+| `record.ts` | pure record building + per-model/provider/tier/policy aggregation + output formatting + the `UNTAGGED` sentinel |
+| `state.ts` | per-session append-only log + corruption-tolerant reader + session-id sanitization + tier-map loader |
+| `types.ts` | usage/record/totals/tier-map shapes |
+| `tiers.json` | committed provider → tier map (`frontier` / `local`) for the rollups |
 
 ## Tests
 

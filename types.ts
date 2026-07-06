@@ -49,11 +49,67 @@ export interface TurnRecord {
   readonly totalTokens: number;
   /** Realized cost for the turn, or null when the provider omits it. */
   readonly costTotal: number | null;
+  /**
+   * Routing-policy tag (#521): the operator's A/B label from
+   * TOKEN_METER_POLICY_TAG, normalized to "untagged" when unset. Distinct from
+   * auto-router's candidate-selection policy — this is a session-scoped
+   * measurement label, nothing routes on it.
+   */
+  readonly policy: string;
 }
 
 /** Per-model aggregate the reader/tool derives from the per-turn log. */
 export interface ModelTotals {
   readonly model: string;
+  readonly turns: number;
+  readonly input: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly output: number;
+  readonly totalTokens: number;
+  /** Sum of realized cost across turns that reported it (null if none did). */
+  readonly costTotal: number | null;
+}
+
+/**
+ * Provider → tier classification, from the committed `tiers.json` next to the
+ * extension (`{v:1, tiers:{...}}`). A provider absent from the map aggregates
+ * under the reserved tier `"unmapped"` — never silently bucketed into a real
+ * tier, so an unclassified provider is visible in every rollup.
+ */
+export interface TierMap {
+  readonly [provider: string]: string;
+}
+
+/** Per-provider aggregate derived from the per-turn log. */
+export interface ProviderTotals {
+  readonly provider: string;
+  readonly turns: number;
+  readonly input: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly output: number;
+  readonly totalTokens: number;
+  /** Sum of realized cost across turns that reported it (null if none did). */
+  readonly costTotal: number | null;
+}
+
+/** Per-policy (routing-policy tag / "untagged") aggregate derived from the per-turn log. */
+export interface PolicyTotals {
+  readonly policy: string;
+  readonly turns: number;
+  readonly input: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly output: number;
+  readonly totalTokens: number;
+  /** Sum of realized cost across turns that reported it (null if none did). */
+  readonly costTotal: number | null;
+}
+
+/** Per-tier (frontier / local / unmapped) aggregate derived from the per-turn log. */
+export interface TierTotals {
+  readonly tier: string;
   readonly turns: number;
   readonly input: number;
   readonly cacheRead: number;

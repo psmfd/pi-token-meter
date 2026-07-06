@@ -16,9 +16,10 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { toJsonl } from "./record.ts";
-import type { TurnRecord } from "./types.ts";
+import type { TierMap, TurnRecord } from "./types.ts";
 
 const NAMESPACE = "token-meter";
 const SESSIONS_DIR = "sessions";
@@ -55,6 +56,34 @@ export async function appendTurn(
   const file = sessionLogPath(sessionId, agentDir);
   await fs.mkdir(dirname(file), { recursive: true });
   await fs.appendFile(file, toJsonl(record), "utf8");
+}
+
+/** Default location of the committed provider → tier map: next to this module. */
+export function defaultTiersPath(): string {
+  return fileURLToPath(new URL("tiers.json", import.meta.url));
+}
+
+/**
+ * Load the provider → tier map from tiers.json (`{v:1, tiers:{...}}`).
+ * Offline-safe and fail-quiet: a missing, unreadable, or malformed file yields
+ * an empty map, which makes every provider aggregate as "unmapped" — visible in
+ * the rollup rather than breaking metering. Non-string entries are dropped.
+ */
+export async function loadTierMap(path?: string): Promise<TierMap> {
+  try {
+    const raw = await fs.readFile(path ?? defaultTiersPath(), "utf8");
+    const parsed = JSON.parse(raw) as { tiers?: unknown };
+    if (parsed === null || typeof parsed !== "object" || typeof parsed.tiers !== "object" || parsed.tiers === null) {
+      return {};
+    }
+    const out: Record<string, string> = {};
+    for (const [provider, tier] of Object.entries(parsed.tiers)) {
+      if (typeof tier === "string" && tier !== "") out[provider] = tier;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 /**

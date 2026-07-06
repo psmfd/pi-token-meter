@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import {
   aggregateByModel,
+  aggregateByPolicy,
   buildRecord,
   formatTable,
   formatTerse,
   grandTotals,
   toJsonl,
+  UNTAGGED,
 } from "../record.ts";
 import type { AssistantMessageLike, TurnRecord } from "../types.ts";
 
-const CTX = { ts: "2026-07-04T00:00:00.000Z", turn: 3, providerFallback: "anthropic" };
+const CTX = { ts: "2026-07-04T00:00:00.000Z", turn: 3, providerFallback: "anthropic", policyTag: "untagged" };
 
 test("buildRecord returns null for non-assistant messages", () => {
   assert.equal(buildRecord({ role: "user" }, CTX), null);
@@ -29,6 +34,7 @@ test("buildRecord reads model + provider atomically from the message", () => {
   assert.deepEqual(buildRecord(msg, CTX), {
     ts: CTX.ts, turn: 3, model: "claude-sonnet-5", provider: "anthropic",
     input: 812, cacheRead: 4200, cacheWrite: 0, output: 340, totalTokens: 5352, costTotal: 0.0193,
+    policy: "untagged",
   });
 });
 
@@ -83,5 +89,36 @@ test("formatTerse and formatTable render totals; empty states are handled", () =
 });
 
 test("toJsonl appends a trailing newline", () => {
-  assert.ok(toJsonl({ ts: "t", turn: 1, model: "m", provider: "p", input: 0, cacheRead: 0, cacheWrite: 0, output: 0, totalTokens: 0, costTotal: null }).endsWith("\n"));
+  assert.ok(toJsonl({ ts: "t", turn: 1, model: "m", provider: "p", input: 0, cacheRead: 0, cacheWrite: 0, output: 0, totalTokens: 0, costTotal: null, policy: "untagged" }).endsWith("\n"));
+});
+
+// --- #521: routing-policy tag ------------------------------------------------
+
+test("buildRecord stamps the policy tag and normalizes empty to UNTAGGED (#521)", () => {
+  const msg = { role: "assistant", model: "m", provider: "p" };
+  assert.equal(buildRecord(msg, { ...CTX, policyTag: "mixed-local" })!.policy, "mixed-local");
+  assert.equal(buildRecord(msg, { ...CTX, policyTag: "" })!.policy, UNTAGGED);
+});
+
+test("aggregateByPolicy buckets records with no policy field as untagged — never dropped (#521)", () => {
+  const rows = aggregateByPolicy([
+    { model: "a", provider: "p", totalTokens: 100, input: 80, cacheRead: 0, cacheWrite: 0, output: 20, costTotal: 0.1, policy: "mixed-local" },
+    { model: "b", provider: "p", totalTokens: 50, input: 40, cacheRead: 0, cacheWrite: 0, output: 10, costTotal: null, policy: "mixed-local" },
+    // pre-#521 log line: no policy key at all
+    { model: "c", provider: "p", totalTokens: 30, input: 20, cacheRead: 0, cacheWrite: 0, output: 10, costTotal: null },
+  ]);
+  assert.equal(rows.length, 2);
+  const tagged = rows.find((r) => r.policy === "mixed-local")!;
+  assert.equal(tagged.turns, 2);
+  assert.equal(tagged.totalTokens, 150);
+  const untagged = rows.find((r) => r.policy === UNTAGGED)!;
+  assert.equal(untagged.turns, 1);
+  assert.equal(untagged.totalTokens, 30);
+});
+
+test("UNTAGGED sentinel is in lockstep with the jq default in scripts/token-meter.sh (#521)", () => {
+  // A drift here silently splits pre-#521 and untagged records into two CLI
+  // buckets — assert the literal appears in the script's jq program.
+  const script = readFileSync(join(import.meta.dirname, "..", "..", "..", "..", "scripts", "token-meter.sh"), "utf8");
+  assert.ok(script.includes(`"${UNTAGGED}"`), "token-meter.sh must default missing .policy to the UNTAGGED literal");
 });
