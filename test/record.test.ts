@@ -8,6 +8,7 @@ import {
   aggregateByModel,
   aggregateByPolicy,
   buildRecord,
+  formatStatus,
   formatTable,
   formatTerse,
   grandTotals,
@@ -86,6 +87,20 @@ test("formatTerse and formatTable render totals; empty states are handled", () =
   const rows = aggregateByModel([{ model: "sonnet", totalTokens: 5100, input: 800, cacheRead: 4000, output: 300, costTotal: 0.1 }]);
   assert.match(formatTerse(rows), /5,100 \(sonnet\).*\$0\.10/);
   assert.match(formatTable(rows), /TOTAL — 1 turns, 5,100 tokens, \$0\.10/);
+});
+
+test("formatStatus renders the plain indicator, compact totals, and honest cost absence", () => {
+  assert.equal(formatStatus([]), "📊 token-meter: on");
+  const one = aggregateByModel([{ model: "sonnet", totalTokens: 412_345, input: 800, cacheRead: 4000, output: 300, costTotal: 1.234 }]);
+  assert.equal(formatStatus(one), "📊 412k tok · $1.23 · 1 model");
+  const two = aggregateByModel([
+    { model: "sonnet", totalTokens: 900_000, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costTotal: null },
+    { model: "haiku", totalTokens: 300_000, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costTotal: null },
+  ]);
+  // No turn reported cost → the dollar segment is omitted, never $0.00.
+  assert.equal(formatStatus(two), "📊 1.2M tok · 2 models");
+  const small = aggregateByModel([{ model: "m", totalTokens: 999, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costTotal: null }]);
+  assert.equal(formatStatus(small), "📊 999 tok · 1 model");
 });
 
 test("toJsonl appends a trailing newline", () => {

@@ -31,8 +31,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 
 import {
-  aggregateByModel, aggregateByProvider, aggregateByTier,
-  buildRecord, formatProviderSection, formatTable, formatTerse, formatTierSection, UNTAGGED,
+  aggregateByModel, aggregateByProvider, aggregateByTier, buildRecord,
+  formatProviderSection, formatStatus, formatTable, formatTerse, formatTierSection, UNTAGGED,
 } from "./record.ts";
 import { appendTurn, loadTierMap, readSession, safeSessionKey } from "./state.ts";
 import type { AssistantMessageLike } from "./types.ts";
@@ -47,6 +47,8 @@ interface ModelContext {
 
 const ENV_SESSION = "TOKEN_METER_SESSION";
 const ENV_ENABLED = "TOKEN_METER_ENABLED";
+/** Floor between live footer recomputes (each one re-reads the session log). */
+const STATUS_MIN_INTERVAL_MS = 2000;
 // #521: operator A/B label. Read from env (inherited by subagent children like
 // the two vars above), normalized to "untagged", and captured at spawn time —
 // a mid-session `export` in the invoking shell is never seen (same env-snapshot
@@ -92,6 +94,27 @@ export default function tokenMeter(pi: ExtensionAPI): void {
     process.env[ENV_ENABLED] = "1";
   };
 
+  // Live footer counter (ADR-0105): whole-tree totals from the session log,
+  // so subagent usage appended by child processes shows up too. The read is
+  // skipped entirely (not just the display call) when there is no UI —
+  // headless children never pay it — and throttled so a pathological burst
+  // of message_end events cannot turn the per-turn re-read into hot-path
+  // work. `force` bypasses the throttle for explicit user actions.
+  let lastStatusMs = 0;
+  const updateStatus = async (ctx: ExtensionContext, force = false): Promise<void> => {
+    if (!enabled || !ctx.hasUI) return;
+    const now = Date.now();
+    if (!force && now - lastStatusMs < STATUS_MIN_INTERVAL_MS) return;
+    lastStatusMs = now;
+    let totals: ReturnType<typeof aggregateByModel> = [];
+    try {
+      totals = aggregateByModel(await readSession(sessionKey));
+    } catch {
+      // Unreadable log → fall back to the plain "on" indicator.
+    }
+    ctx.ui.setStatus("token-meter", formatStatus(totals));
+  };
+
   pi.registerFlag("token-meter", {
     description: "Count per-model token usage for this session",
     type: "boolean",
@@ -106,7 +129,9 @@ export default function tokenMeter(pi: ExtensionAPI): void {
     }
     if (enabled) {
       propagate();
-      if (ctx.hasUI) ctx.ui.setStatus("token-meter", "📊 token-meter: on");
+      // Resumed sessions show their running totals immediately; a fresh log
+      // renders the plain "on" indicator until the first record lands.
+      await updateStatus(ctx, true);
     }
   });
 
@@ -118,7 +143,7 @@ export default function tokenMeter(pi: ExtensionAPI): void {
       if (sub === "on") {
         enabled = true;
         propagate();
-        if (ctx.hasUI) ctx.ui.setStatus("token-meter", "📊 token-meter: on");
+        await updateStatus(ctx, true);
       } else if (sub === "off") {
         enabled = false;
         process.env[ENV_ENABLED] = "0";
@@ -139,6 +164,8 @@ export default function tokenMeter(pi: ExtensionAPI): void {
         `token-meter: ${enabled ? "ON" : "OFF"} (policy: ${policyTag}) — ${summary}`,
         "info",
       );
+      // Any explicit /token-meter interaction also refreshes the footer.
+      await updateStatus(ctx, true);
     },
   });
 
@@ -147,15 +174,20 @@ export default function tokenMeter(pi: ExtensionAPI): void {
     try {
       if (!enabled) return undefined;
       const message = (event as unknown as MessageEndEvent).message;
-      if (!message || message.role !== "assistant") return undefined;
-      turn += 1;
-      const record = buildRecord(message, {
-        ts: new Date().toISOString(),
-        turn,
-        providerFallback: (ctx as unknown as ModelContext).model?.provider ?? "unknown",
-        policyTag,
-      });
-      if (record) await appendTurn(sessionKey, record);
+      if (message?.role === "assistant") {
+        turn += 1;
+        const record = buildRecord(message, {
+          ts: new Date().toISOString(),
+          turn,
+          providerFallback: (ctx as unknown as ModelContext).model?.provider ?? "unknown",
+          policyTag,
+        });
+        if (record) await appendTurn(sessionKey, record);
+      }
+      // Refresh the live footer on every message_end, not just assistant
+      // turns: a toolResult end is when freshly-appended subagent usage
+      // becomes visible in the log. No-op without a UI (headless children).
+      await updateStatus(ctx);
     } catch {
       // Accounting must never disturb a turn.
     }

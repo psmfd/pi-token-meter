@@ -197,6 +197,28 @@ export function formatTerse(totals: ReadonlyArray<ModelTotals>): string {
   return `Session tokens: ${parts} = ${commas(g.totalTokens)} total · ${dollars(g.costTotal)}`;
 }
 
+/** Compact token count for the footer status: 999, 412k, 1.2M. */
+function compact(n: number): string {
+  const r = Math.round(n);
+  if (r < 1000) return String(r);
+  if (r < 1_000_000) return `${Math.round(r / 1000)}k`;
+  return `${(r / 1_000_000).toFixed(1)}M`;
+}
+
+/**
+ * One-segment footer status line with live whole-tree totals. Falls back to
+ * the plain "on" indicator until the first record lands. Cost is omitted
+ * (never rendered $0) when no turn reported one — same absence≠zero honesty
+ * as the tier section.
+ */
+export function formatStatus(totals: ReadonlyArray<ModelTotals>): string {
+  if (totals.length === 0) return "📊 token-meter: on";
+  const g = grandTotals(totals);
+  const models = `${totals.length} model${totals.length === 1 ? "" : "s"}`;
+  const cost = g.costTotal === null ? "" : ` · ${dollars(g.costTotal)}`;
+  return `📊 ${compact(g.totalTokens)} tok${cost} · ${models}`;
+}
+
 /** Multi-line per-model breakdown (verbose tool output; also the CLI reuses the shape). */
 export function formatTable(totals: ReadonlyArray<ModelTotals>): string {
   if (totals.length === 0) return "No token usage recorded for this session yet.";

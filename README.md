@@ -127,7 +127,11 @@ scripts/token-meter.sh --all-time --compare-policies           # the A/B report
   `/token-meter on|off` (`/token-meter status` reports the running total;
   `/token-meter policy <tag>` retags this process — see the policy section).
 
-When on, the status bar shows `📊 token-meter: on`.
+When on, the status bar shows a live whole-tree counter — e.g.
+`📊 412k tok · $1.23 · 2 models` — refreshed from the session log as turns
+land (subagent usage included), falling back to `📊 token-meter: on` until the
+first record. The dollar segment is omitted when no turn reported cost
+(absence ≠ zero, [ADR-0105](https://github.com/psmfd/pi-config/blob/main/adrs/0105-token-meter-strict-env-carveout.md)).
 
 ## Files
 
