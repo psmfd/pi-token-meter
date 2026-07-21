@@ -1,6 +1,6 @@
 {
   "name": "@psmfd/pi-token-meter",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Pi extension: per-session, per-model token-usage counter — records assistant-turn token usage; totals and cost by model, including subagents",
   "type": "module",
   "license": "MIT",

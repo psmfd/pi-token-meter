@@ -51,7 +51,7 @@ test("buildRecord falls back to ctx provider and computes totalTokens when absen
 });
 
 test("buildRecord coerces NaN/Infinity/absent token fields to 0", () => {
-  const r = buildRecord({ role: "assistant", model: "m", usage: { input: NaN, output: Infinity } as never }, CTX)!;
+  const r = buildRecord({ role: "assistant", model: "m", usage: { input: NaN, output: Infinity } }, CTX)!;
   assert.equal(r.input, 0);
   assert.equal(r.output, 0);
 });
@@ -87,6 +87,15 @@ test("formatTerse and formatTable render totals; empty states are handled", () =
   const rows = aggregateByModel([{ model: "sonnet", totalTokens: 5100, input: 800, cacheRead: 4000, output: 300, costTotal: 0.1 }]);
   assert.match(formatTerse(rows), /5,100 \(sonnet\).*\$0\.10/);
   assert.match(formatTable(rows), /TOTAL — 1 turns, 5,100 tokens, \$0\.10/);
+});
+
+test("formatTable renders the cacheWrite column so cache-warm cost is visible (#806)", () => {
+  const rows = aggregateByModel([
+    { model: "sonnet", totalTokens: 5100, input: 800, cacheRead: 4000, cacheWrite: 250, output: 300, costTotal: 0.1 },
+  ]);
+  const out = formatTable(rows);
+  assert.match(out, /cacheWrite/); // header column is present
+  assert.match(out, /\b250\b/); // the cacheWrite value is rendered (unique in this row)
 });
 
 test("formatStatus renders the plain indicator, compact totals, and honest cost absence", () => {

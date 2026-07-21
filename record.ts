@@ -126,7 +126,13 @@ function policyKey(r: Partial<TurnRecord>): string {
   return typeof r.policy === "string" && r.policy !== "" ? r.policy : UNTAGGED;
 }
 
-/** Fold turn records into per-policy totals, sorted by descending totalTokens. */
+/**
+ * Fold turn records into per-policy totals, sorted by descending totalTokens.
+ * Exported for the CLI (scripts/token-meter.sh, via jq) and unit tests, not the
+ * in-session tool: per ADR-0077 the `token_usage` tool deliberately stays
+ * status-only for the routing-policy tag, so index.ts imports the model/provider/
+ * tier aggregators but not this one. Do not flag as unused (#806).
+ */
 export function aggregateByPolicy(records: ReadonlyArray<Partial<TurnRecord>>): PolicyTotals[] {
   return foldBy(records, policyKey)
     .map(({ key, cost, costSeen, ...m }): PolicyTotals => ({
@@ -219,48 +225,60 @@ export function formatStatus(totals: ReadonlyArray<ModelTotals>): string {
   return `📊 ${compact(g.totalTokens)} tok${cost} · ${models}`;
 }
 
-/** Multi-line per-model breakdown (verbose tool output; also the CLI reuses the shape). */
-export function formatTable(totals: ReadonlyArray<ModelTotals>): string {
-  if (totals.length === 0) return "No token usage recorded for this session yet.";
-  const g = grandTotals(totals);
-  const lines = [
-    "model                       turns     input  cacheRead     output       total      cost",
-  ];
-  for (const t of totals) {
-    lines.push(
-      `${t.model.padEnd(24)}  ${String(t.turns).padStart(5)}  ${commas(t.input).padStart(8)}  ` +
-      `${commas(t.cacheRead).padStart(9)}  ${commas(t.output).padStart(9)}  ` +
-      `${commas(t.totalTokens).padStart(10)}  ${dollars(t.costTotal).padStart(8)}`,
-    );
-  }
-  lines.push(`TOTAL — ${g.turns} turns, ${commas(g.totalTokens)} tokens, ${dollars(g.costTotal)}`);
-  return lines.join("\n");
-}
-
-/** Shared row shape for the provider/tier breakdown sections. */
+/** Shared row shape for the model/provider/tier breakdown tables. */
 interface BreakdownRow {
   readonly name: string;
   readonly turns: number;
   readonly input: number;
   readonly cacheRead: number;
+  readonly cacheWrite: number;
   readonly output: number;
   readonly totalTokens: number;
   readonly costTotal: number | null;
 }
 
+/**
+ * The one place column widths live. `headerLine` and `formatRow` build from the
+ * SAME pad widths so a header can never drift from its rows — the previous
+ * hand-typed header string had already diverged by a space (#806). `cacheWrite`
+ * is rendered here: the one-time cache-warm cost is captured and aggregated on
+ * every record, so hiding it would contradict the README's "the breakdown is
+ * always kept" promise for a tool whose purpose is cost transparency.
+ */
+function headerLine(label: string): string {
+  return (
+    `${label.padEnd(24)}  ${"turns".padStart(5)}  ${"input".padStart(8)}  ` +
+    `${"cacheRead".padStart(9)}  ${"cacheWrite".padStart(10)}  ${"output".padStart(9)}  ` +
+    `${"total".padStart(10)}  ${"cost".padStart(8)}`
+  );
+}
+
+function formatRow(name: string, r: Omit<BreakdownRow, "name">): string {
+  return (
+    `${name.padEnd(24)}  ${String(r.turns).padStart(5)}  ${commas(r.input).padStart(8)}  ` +
+    `${commas(r.cacheRead).padStart(9)}  ${commas(r.cacheWrite).padStart(10)}  ${commas(r.output).padStart(9)}  ` +
+    `${commas(r.totalTokens).padStart(10)}  ${dollars(r.costTotal).padStart(8)}`
+  );
+}
+
 function formatBreakdown(heading: string, rows: ReadonlyArray<BreakdownRow>): string {
   if (rows.length === 0) return `${heading}: none recorded yet.`;
-  const lines = [
-    `${heading.padEnd(24)}   turns     input  cacheRead     output       total      cost`,
-  ];
-  for (const r of rows) {
-    lines.push(
-      `${r.name.padEnd(24)}  ${String(r.turns).padStart(5)}  ${commas(r.input).padStart(8)}  ` +
-      `${commas(r.cacheRead).padStart(9)}  ${commas(r.output).padStart(9)}  ` +
-      `${commas(r.totalTokens).padStart(10)}  ${dollars(r.costTotal).padStart(8)}`,
-    );
-  }
+  const lines = [headerLine(heading)];
+  for (const r of rows) lines.push(formatRow(r.name, r));
   return lines.join("\n");
+}
+
+/**
+ * Multi-line per-model breakdown (verbose tool output; also the CLI reuses the
+ * shape). Delegates to formatBreakdown for the header + rows so the model view
+ * shares one column definition with the provider/tier views, then appends the
+ * grand-total line.
+ */
+export function formatTable(totals: ReadonlyArray<ModelTotals>): string {
+  if (totals.length === 0) return "No token usage recorded for this session yet.";
+  const g = grandTotals(totals);
+  const body = formatBreakdown("model", totals.map((t) => ({ ...t, name: t.model })));
+  return `${body}\nTOTAL — ${g.turns} turns, ${commas(g.totalTokens)} tokens, ${dollars(g.costTotal)}`;
 }
 
 /** Per-provider breakdown section (verbose tool output). */

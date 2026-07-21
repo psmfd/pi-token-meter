@@ -75,11 +75,11 @@ test("aggregateByTier with an empty map puts everything in unmapped", () => {
 test("formatProviderSection and formatTierSection render rows with n/a for null cost", () => {
   const provider = formatProviderSection(aggregateByProvider(RECORDS));
   assert.match(provider, /provider\s+turns/);
-  assert.match(provider, /omlx\s+1\s+400\s+0\s+200\s+600\s+n\/a/);
+  assert.match(provider, /omlx\s+1\s+400\s+0\s+0\s+200\s+600\s+n\/a/); // input cacheRead cacheWrite output total
   const tier = formatTierSection(aggregateByTier(RECORDS, TIERS));
   assert.match(tier, /tier\s+turns/);
   assert.match(tier, /frontier\s+3/);
-  assert.match(tier, /local\s+1\s+400\s+0\s+200\s+600\s+n\/a/);
+  assert.match(tier, /local\s+1\s+400\s+0\s+0\s+200\s+600\s+n\/a/); // input cacheRead cacheWrite output total
 });
 
 test("formatTierSection with no rows says none recorded", () => {
