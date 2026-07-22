@@ -82,16 +82,21 @@ export default function tokenMeter(pi: ExtensionAPI): void {
   let enabled = process.env[ENV_ENABLED] === "1";
   let sessionKey = "unknown-session";
   let turn = 0;
-  // #521: normalized once here; write-back keeps the whole descendant tree on
-  // the same literal (a child of an untagged root sees "untagged", not "").
+  // #521: normalized once here (in-memory only). The env write-back that keeps
+  // the whole descendant tree on the same literal (a child of an untagged root
+  // sees "untagged", not "") happens in propagate(), i.e. the enabled path only
+  // — writing it unconditionally at load broke the "inert when disabled"
+  // invariant (#807).
   let policyTag = process.env[ENV_POLICY_TAG]?.trim() || UNTAGGED;
-  process.env[ENV_POLICY_TAG] = policyTag;
 
   // Export env so subagent child processes inherit enablement + the root key.
   // Only the ROOT stamps the session id (guarded) — descendants keep the root's.
+  // The policy tag is stamped here too so it rides the same enabled-only path:
+  // a disabled load leaves the environment untouched.
   const propagate = (): void => {
     if (!process.env[ENV_SESSION]) process.env[ENV_SESSION] = sessionKey;
     process.env[ENV_ENABLED] = "1";
+    process.env[ENV_POLICY_TAG] = policyTag;
   };
 
   // Live footer counter (ADR-0105): whole-tree totals from the session log,
