@@ -1,7 +1,7 @@
 {
   "name": "@psmfd/pi-token-meter",
   "version": "0.2.3",
-  "description": "Pi extension: per-session, per-model token-usage counter — records assistant-turn token usage; totals and cost by model, including subagents",
+  "description": "Pi extension: per-session, per-model token-usage counter \u2014 records assistant-turn token usage; totals and cost by model, including subagents",
   "type": "module",
   "license": "MIT",
   "repository": "github:psmfd/pi-token-meter",
@@ -25,7 +25,7 @@
     "@earendil-works/pi-coding-agent": ">=0.75"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.81.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
     "@types/node": "^25.9.3",
     "tsx": "^4.19.2",
     "typescript": "^6.0.3"
