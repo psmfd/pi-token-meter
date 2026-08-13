@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import {
   aggregateByModel,
   aggregateByPolicy,
@@ -140,9 +137,10 @@ test("aggregateByPolicy buckets records with no policy field as untagged — nev
   assert.equal(untagged.totalTokens, 30);
 });
 
-test("UNTAGGED sentinel is in lockstep with the jq default in scripts/token-meter.sh (#521)", () => {
-  // A drift here silently splits pre-#521 and untagged records into two CLI
-  // buckets — assert the literal appears in the script's jq program.
-  const script = readFileSync(join(import.meta.dirname, "..", "..", "..", "..", "scripts", "token-meter.sh"), "utf8");
-  assert.ok(script.includes(`"${UNTAGGED}"`), "token-meter.sh must default missing .policy to the UNTAGGED literal");
-});
+// The UNTAGGED <-> scripts/token-meter.sh lockstep (#521) is asserted by
+// validate.sh § "token-meter UNTAGGED lockstep gate", NOT here. This suite ships
+// to psmfd/pi-token-meter, where the CLI script does not exist (targets.yml ships
+// only agent/extensions/token-meter), so the assertion had no counterpart to read
+// and failed the mirror's CI unconditionally (#966). The invariant is monorepo-
+// scoped; it belongs in the monorepo's gate.
+

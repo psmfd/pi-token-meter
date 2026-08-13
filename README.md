@@ -197,7 +197,7 @@ flowchart LR
         CM["cache-meter (ADR-0034 field vocabulary)"]
     end
 
-    CLISH["scripts/token-meter.sh (tracked, jq-based, UNTAGGED lockstep)"]
+    CLISH["scripts/token-meter.sh (tracked, jq-based, UNTAGGED lockstep — gated by validate.sh, monorepo-only)"]
 
     subgraph MIRROR["mirror distribution"]
         TARGETS["mirror/targets.yml (pi-token-meter)"]
@@ -304,7 +304,11 @@ scripts/token-meter.sh --all-time --compare-policies           # the A/B report
   the same ADR-0073 env-capture caveat as `/token-meter off`).
 - Records with no `policy` field (logs written before #521) aggregate under
   `untagged` — never dropped. The sentinel is defined once (`UNTAGGED` in
-  `record.ts`) and the CLI's jq default is kept in lockstep by a unit test.
+  `record.ts`) and the CLI's jq default is kept in lockstep by a `validate.sh`
+  gate, which extracts the literal from `record.ts` and asserts the script
+  carries it. The gate lives in the monorepo rather than in this suite because
+  the suite ships to the mirror, where `scripts/token-meter.sh` does not exist
+  (#966).
 - CLI views: `--by-policy`, `--by-policy-tier`, `--by-policy-model`, and
   `--compare-policies` (both cross-tabs in one report). They compose with
   `--session`/`--all-time` like every other grouping flag.
